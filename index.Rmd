@@ -1,30 +1,94 @@
 ---
-title: "Practical Machine Learning Course Proj"
+title: "Practical Machine Learning Course Project"
 author: "JBaker"
 date: "May 29, 2017"
 output: html_document
 ---
+# Executive Summary
+
+Weight lifting data from the [Human Activity Recognition project](http://groupware.les.inf.puc-rio.br/har) are analyzed. Using the pitch, yaw, and roll measurements from sensors attached to the forearm, belt, arm, and dumbbell from 6 subjects, a model was trained to catagorize the activity into one of five possible activities. The model was then improved via cross validation and ultimately arriving at a 98.6% accuracy on a validation subset of the training data.
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r dummy, echo=FALSE, message=FALSE}
+# Source data download instructions (commented out yet included):
+# download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "./pml-testing.csv")
+# download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "./pml-training.csv")
+#
+library(caret)
+library(rpart)
+library(randomForest)
 ```
 
-## Including Plots
+```{r intakeData, cache=TRUE, echo=TRUE}
+training <- read.csv("./pml-training.csv", stringsAsFactors = FALSE)
+testing <- read.csv("./pml-testing.csv", stringsAsFactors = FALSE)
 
-You can also embed plots, for example:
+# Determine the variables of interest & create data subsets
+cols <- c(grep("^pitch",names(training)), grep("^roll",names(training)), 
+          grep("^yaw",names(training)), grep("classe", names(training)))
+smtraining <- training[,cols]
+smtesting <- testing[,cols]
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+# Partition a bit of the training data for estimating the OOSE
+inTrain <- createDataPartition(y = smtraining$classe, p = .7, list = FALSE)
+validation <- smtraining[-inTrain,]
+train_data <- smtraining[inTrain,]
+```
+## Data and Data Selection
+
+The training data is divded into a training and validation subsets. While the original data set included 160 variables in each observation, the data set was pared back to the sensors and raw data as mentioned in the [published paper](http://groupware.les.inf.puc-rio.br/har). Experimental efforts suggested that suitably accurate predictions could be made on this smaller set of 12 variables. 
+
+## Model fitting
+
+First let's try a vanilla CART approach and test the accuracy.
+```{r CART, cache=TRUE, echo=TRUE}
+library(rpart)
+CART_fit <- train(classe ~ ., data=train_data, method="rpart")
+CART_outcome <- predict(CART_fit, validation)
+CART_accuracy <- round(sum((CART_outcome == validation$classe))/nrow(validation), 2)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+Using recursive partitioning and regression trees an accuracy of `r CART_accuracy` was obtained. No better than a coin toss... Let's now try a random forest approach and test accuracy.
+
+``` {r RF, cache=TRUE, echo=TRUE}
+set.seed(5332)
+RF_fit <- train(classe ~ ., data=train_data, method="rf")
+RF_outcome <- predict(RF_fit, validation)
+RF_accuracy <- round(sum((RF_outcome == validation$classe))/nrow(validation), 3)
+```
+
+Using random forest trees an accuracy of `r RF_accuracy` was obtained. Improvement over previous method. Let's try using cross-validation to see if we can improve the default settings for random forest results.
+
+``` {r RFcv, cache=TRUE, echo=TRUE}
+set.seed(5332)
+tctrl <-  trainControl(method = "cv", number = 4)
+RFcv_fit <- train(classe ~ ., data=train_data, method="rf", trControl = tctrl)
+RFcv_outcome <- predict(RFcv_fit, validation)
+RFcv_accuracy <- round(sum((RFcv_outcome == validation$classe))/nrow(validation), 3)
+confusionMatrix(RFcv_outcome, validation$classe)
+```
+
+Using random forest trees with cross validation an accuracy of `r RFcv_accuracy` was obtained on a subset of the training data. 
+
+### Predict Test Data
+
+Let's apply the best model to the testing data.
+
+```{r test_mod}
+toutcome <- predict(RFcv_fit, smtesting)
+toutcome
+```
+
+## Summary
+Three different approaches to fitting a model to the training data were tried. Random forest was the best model with cross validation adding negligible benefit. The final model (random forest with cross validation) gave good results with an estimated out of sample error of `r (1 - RFcv_accuracy)`.
+
+
+## References
+
+Data sets provided via: 
+[Data Set Link](http://groupware.les.inf.puc-rio.br/har)
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+
